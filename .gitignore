@@ -1,1 +1,15 @@
-node_modules
+node_modules/
+dist/
+dist-electron/
+.env
+.env.*
+*.local
+
+# Database and App Data
+.cowork-data/
+*.sqlite
+*.sqlite-journal
+*.db
+
+# OS Files
+.DS_Store
