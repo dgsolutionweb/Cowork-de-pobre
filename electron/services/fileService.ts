@@ -236,7 +236,11 @@ export class FileService {
 
   async deleteSingleFile(filePath: string, allowedPaths: string[]): Promise<void> {
     ensureAllowedPath(filePath, allowedPaths, "Exclusão");
-    await fs.unlink(filePath);
+    try {
+      await shell.trashItem(filePath);
+    } catch (error) {
+      await fs.rm(filePath, { recursive: true, force: true });
+    }
   }
 
   async createDirectory(

@@ -1,10 +1,14 @@
-import { useEffect, useState } from "react";
-import type { Automation, CreateAutomationInput } from "@shared/types";
+import { useRef, useEffect, useState } from "react";
+import type { Automation, CreateAutomationInput, FileItem } from "@shared/types";
 import {
+  AtSign,
   CalendarClock,
   CheckCircle2,
   Clock,
   Edit2,
+  File,
+  FileImage,
+  FileText,
   Loader2,
   Plus,
   Play,
@@ -32,6 +36,84 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+
+// ─── Mention Helpers ──────────────────────────────────────────────────────────
+
+function isVisibleMentionFile(file: FileItem) {
+  const normalizedName = file.name.trim().toLowerCase();
+  return !normalizedName.startsWith(".");
+}
+
+function getAtMention(
+  value: string,
+  cursorPos: number,
+): { start: number; query: string } | null {
+  const before = value.slice(0, cursorPos);
+  const match = before.match(/@([^\s@]*)$/);
+  if (!match) return null;
+  return { start: before.length - match[0].length, query: match[1] };
+}
+
+function FileIcon({ ext, isDirectory, className }: { ext: string; isDirectory?: boolean; className?: string }) {
+  if (isDirectory) return <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>;
+  if ([".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"].includes(ext))
+    return <FileImage className={className} />;
+  if ([".pdf", ".doc", ".docx", ".txt", ".rtf"].includes(ext))
+    return <FileText className={className} />;
+  return <File className={className} />;
+}
+
+const AtMentionPicker = ({
+  query,
+  files,
+  highlightIndex,
+  onSelect,
+}: {
+  query: string;
+  files: FileItem[];
+  highlightIndex: number;
+  onSelect: (file: FileItem) => void;
+}) => {
+  const filtered = files
+    .filter(
+      (f) => isVisibleMentionFile(f) && f.name.toLowerCase().includes(query.toLowerCase()),
+    )
+    .slice(0, 8);
+
+  if (filtered.length === 0) return null;
+
+  return (
+    <div className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-xl border border-border/60 bg-popover shadow-lg overflow-hidden">
+      <div className="px-3 py-1.5 border-b border-border/40">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1">
+          <AtSign className="size-2.5" />
+          Mencionar arquivo
+        </p>
+      </div>
+      <div className="max-h-52 overflow-y-auto py-1">
+        {filtered.map((file, i) => (
+          <button
+            key={file.path}
+            type="button"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              onSelect(file);
+            }}
+            className={`flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors ${
+              i === highlightIndex ? "bg-accent" : "hover:bg-accent/50"
+            }`}
+          >
+            <FileIcon ext={file.extension} isDirectory={file.isDirectory} className="size-3.5 shrink-0 text-muted-foreground" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[12px] font-medium text-foreground">{file.name}</p>
+              <p className="truncate text-[10px] text-muted-foreground">{file.directoryName}</p>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
 
 // ─── Schedule helpers ─────────────────────────────────────────────────────────
 
@@ -238,14 +320,25 @@ const AutomationDialog = ({
   onOpenChange,
   editing,
   onSaved,
+  availableFiles,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   editing: Automation | null;
   onSaved: () => void;
+  availableFiles: FileItem[];
 }) => {
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   const [saving, setSaving] = useState(false);
+
+  // @ mention state
+  const [atMentionQuery, setAtMentionQuery] = useState("");
+  const [atMentionStart, setAtMentionStart] = useState(0);
+  const [atMentionOpen, setAtMentionOpen] = useState(false);
+  const [atPickerIndex, setAtPickerIndex] = useState(0);
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const inputWrapperRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (open) {
@@ -260,6 +353,7 @@ const AutomationDialog = ({
       } else {
         setForm(DEFAULT_FORM);
       }
+      setAtMentionOpen(false);
     }
   }, [open, editing]);
 
@@ -267,6 +361,77 @@ const AutomationDialog = ({
     setForm((prev) => ({ ...prev, [key]: value }));
 
   const isValid = form.name.trim().length > 0 && form.commandText.trim().length > 0;
+
+  const handleCommandChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    set("commandText", value);
+
+    const cursorPos = e.target.selectionStart ?? value.length;
+    const atInfo = getAtMention(value, cursorPos);
+
+    if (atInfo) {
+      setAtMentionQuery(atInfo.query);
+      setAtMentionStart(atInfo.start);
+      setAtMentionOpen(true);
+      setAtPickerIndex(0);
+    } else {
+      setAtMentionOpen(false);
+    }
+  };
+
+  const handleFileSelect = (file: FileItem) => {
+    const cursor = textareaRef.current?.selectionStart ?? form.commandText.length;
+    const before = form.commandText.slice(0, atMentionStart);
+    const after = form.commandText.slice(cursor);
+    
+    // Injetamos uma marcação que o Gemini entende bem
+    const tag = `[Arquivo: ${file.name} - ${file.path}]`;
+    const newText = `${before}${tag} ${after}`;
+    
+    set("commandText", newText);
+    setAtMentionOpen(false);
+    setAtMentionQuery("");
+
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        const pos = before.length + tag.length + 1;
+        textareaRef.current.selectionStart = pos;
+        textareaRef.current.selectionEnd = pos;
+        textareaRef.current.focus();
+      }
+    });
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (atMentionOpen) {
+      const filtered = availableFiles
+        .filter(
+          (f) => isVisibleMentionFile(f) && f.name.toLowerCase().includes(atMentionQuery.toLowerCase()),
+        )
+        .slice(0, 8);
+
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setAtMentionOpen(false);
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setAtPickerIndex((i) => Math.min(i + 1, filtered.length - 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setAtPickerIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if ((e.key === "Enter" || e.key === "Tab") && filtered[atPickerIndex]) {
+        e.preventDefault();
+        handleFileSelect(filtered[atPickerIndex]);
+        return;
+      }
+    }
+  };
 
   const handleSave = async () => {
     if (!isValid) return;
@@ -341,15 +506,27 @@ const AutomationDialog = ({
             <label className="text-[12px] font-semibold text-foreground">
               Comando <span className="text-destructive">*</span>
             </label>
-            <textarea
-              value={form.commandText}
-              onChange={(e) => set("commandText", e.target.value)}
-              placeholder="Ex.: Organize minha pasta Downloads por tipo de arquivo"
-              rows={2}
-              className="w-full resize-none rounded-xl border border-border/60 bg-muted/20 px-4 py-2.5 text-[13px] text-foreground placeholder:text-muted-foreground/60 focus:border-primary/40 focus:bg-background focus:outline-none transition-colors"
-            />
+            <div className="relative" ref={inputWrapperRef}>
+              {atMentionOpen && (
+                <AtMentionPicker
+                  query={atMentionQuery}
+                  files={availableFiles}
+                  highlightIndex={atPickerIndex}
+                  onSelect={handleFileSelect}
+                />
+              )}
+              <textarea
+                ref={textareaRef}
+                value={form.commandText}
+                onChange={handleCommandChange}
+                onKeyDown={handleKeyDown}
+                placeholder="Ex.: Organize minha pasta Downloads por tipo de arquivo (use @ para mencionar arquivos)"
+                rows={3}
+                className="w-full resize-none rounded-xl border border-border/60 bg-muted/20 px-4 py-2.5 text-[13px] text-foreground placeholder:text-muted-foreground/60 focus:border-primary/40 focus:bg-background focus:outline-none transition-colors"
+              />
+            </div>
             <p className="text-[11px] text-muted-foreground">
-              Linguagem natural — o mesmo texto que você usaria no Assistente.
+              Linguagem natural — use <span className="font-mono text-primary">@</span> para mencionar arquivos e fornecer contexto local.
             </p>
           </div>
 
@@ -546,13 +723,26 @@ export const TasksPage = () => {
   const [runningId, setRunningId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Automation | null>(null);
+  const [availableFiles, setAvailableFiles] = useState<FileItem[]>([]);
 
   const loadAutomations = async () => {
     setAutomations(await desktop().automations.list());
   };
 
+  const fetchFiles = () => {
+    desktop()
+      .files.browse({ limit: 300 })
+      .then((data) => {
+        setAvailableFiles(data.files);
+      })
+      .catch(() => {});
+  };
+
   useEffect(() => {
     loadAutomations();
+    fetchFiles();
+    window.addEventListener("focus", fetchFiles);
+    return () => window.removeEventListener("focus", fetchFiles);
   }, []);
 
   const handleToggle = async (automation: Automation, enabled: boolean) => {
@@ -708,6 +898,7 @@ export const TasksPage = () => {
         onOpenChange={setDialogOpen}
         editing={editing}
         onSaved={loadAutomations}
+        availableFiles={availableFiles}
       />
     </>
   );

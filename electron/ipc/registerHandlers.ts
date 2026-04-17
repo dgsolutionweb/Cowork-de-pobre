@@ -16,6 +16,7 @@ import { HistoryService } from "../services/historyService";
 import { PermissionsService } from "../services/permissionsService";
 import { PreferencesService } from "../services/preferencesService";
 import { TaskExecutionService } from "../services/taskExecutionService";
+import { SchedulerService } from "../services/schedulerService";
 
 export const registerHandlers = (window: BrowserWindow) => {
   const db = getDatabase();
@@ -40,15 +41,24 @@ export const registerHandlers = (window: BrowserWindow) => {
   const automationService = new AutomationService(
     automationsRepository,
     taskExecutionService,
+    geminiChatService,
+    fileService,
+    documentService,
   );
   const dashboardService = new DashboardService(
     historyRepository,
     directoriesRepository,
     automationsRepository,
   );
+  const schedulerService = new SchedulerService(
+    automationService,
+    permissionsService,
+    preferencesService
+  );
 
   permissionsService.ensureStarterDirectories();
   automationService.ensureDefaults();
+  schedulerService.start();
 
   // In-memory conversation history per session (keyed by conversationId from renderer)
   const conversations = new Map<string, unknown[]>();

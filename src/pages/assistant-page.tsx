@@ -95,7 +95,8 @@ const TOOL_LABELS: Record<string, string> = {
 
 // ─── File icon helper ─────────────────────────────────────────────────────────
 
-function FileIcon({ ext, className }: { ext: string; className?: string }) {
+function FileIcon({ ext, isDirectory, className }: { ext: string; isDirectory?: boolean; className?: string }) {
+  if (isDirectory) return <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>;
   if ([".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"].includes(ext))
     return <FileImage className={className} />;
   if ([".pdf", ".doc", ".docx", ".txt", ".rtf"].includes(ext))
@@ -105,7 +106,7 @@ function FileIcon({ ext, className }: { ext: string; className?: string }) {
 
 function isVisibleMentionFile(file: FileItem) {
   const normalizedName = file.name.trim().toLowerCase();
-  return !file.isDirectory && !normalizedName.startsWith(".");
+  return !normalizedName.startsWith(".");
 }
 
 // ─── Pending file operation card (Gemini-initiated) ───────────────────────────
@@ -371,7 +372,7 @@ const FileChip = ({
   onDelete: () => void;
 }) => (
   <div className="group flex items-center gap-1 rounded-full border border-border/60 bg-muted/40 pl-2 pr-1 py-1 text-[11px]">
-    <FileIcon ext={file.extension} className="size-3 shrink-0 text-muted-foreground" />
+    <FileIcon ext={file.extension} isDirectory={file.isDirectory} className="size-3 shrink-0 text-muted-foreground" />
     <span className="max-w-[120px] truncate font-medium text-foreground">{file.name}</span>
     <div className="ml-1 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
       <button
@@ -451,7 +452,7 @@ const AtMentionPicker = ({
               i === highlightIndex ? "bg-accent" : "hover:bg-accent/50"
             }`}
           >
-            <FileIcon ext={file.extension} className="size-3.5 shrink-0 text-muted-foreground" />
+            <FileIcon ext={file.extension} isDirectory={file.isDirectory} className="size-3.5 shrink-0 text-muted-foreground" />
             <div className="min-w-0 flex-1">
               <p className="truncate text-[12px] font-medium text-foreground">{file.name}</p>
               <p className="truncate text-[10px] text-muted-foreground">{file.directoryName}</p>

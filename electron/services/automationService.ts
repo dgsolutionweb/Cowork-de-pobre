@@ -2,11 +2,17 @@ import type { AppPreferences, Automation, ExecutionResult } from "../../shared/t
 import { createId } from "../utils/id";
 import { AutomationsRepository } from "../repositories/automationsRepository";
 import { TaskExecutionService } from "./taskExecutionService";
+import { GeminiChatService } from "./geminiChatService";
+import { FileService } from "./fileService";
+import { DocumentService } from "./documentService";
 
 export class AutomationService {
   constructor(
     private readonly repository: AutomationsRepository,
     private readonly taskExecutionService: TaskExecutionService,
+    private readonly geminiChatService: GeminiChatService,
+    private readonly fileService: FileService,
+    private readonly documentService: DocumentService,
   ) {}
 
   ensureDefaults() {
@@ -104,7 +110,49 @@ export class AutomationService {
       directories,
       preferences,
     );
-    const result = await this.taskExecutionService.executeDraft(preview.draftId, directories);
+
+    let result: ExecutionResult;
+
+    if (preview.parsed.intent === "unknown") {
+      const historyId = createId();
+      try {
+        const chatResult = await this.geminiChatService.chat(
+          [],
+          automation.commandText,
+          { directories, preferences },
+          this.fileService,
+          this.documentService,
+          this.taskExecutionService,
+        );
+
+        let summaryStr = chatResult.assistantText;
+        if (chatResult.pendingPreviews.length > 0 || chatResult.pendingFileOps.length > 0) {
+          summaryStr += "\n(Requer confirmação manual no painel/chat para operações pendentes)";
+        }
+
+        result = {
+          historyId,
+          status: "completed",
+          summary: summaryStr,
+          affectedFiles: [],
+          logs: ["Automação processada via inteligência artificial (Gemini)."],
+          executedAt: new Date().toISOString(),
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Erro na automação via IA";
+        result = {
+          historyId,
+          status: "failed",
+          summary: "Falha ao processar automação avançada com Gemini.",
+          affectedFiles: [],
+          logs: [message],
+          errorMessage: message,
+          executedAt: new Date().toISOString(),
+        };
+      }
+    } else {
+      result = await this.taskExecutionService.executeDraft(preview.draftId, directories);
+    }
 
     this.repository.updateLastRun(id, result.executedAt, result.status);
     return result;

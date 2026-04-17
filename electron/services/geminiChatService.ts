@@ -260,34 +260,34 @@ const TOOLS = {
       },
     },
     {
-      name: "renomear_arquivo",
+      name: "renomear_item",
       description:
-        "Prepara uma prévia para renomear um arquivo específico. Use o caminho completo obtido por listar_arquivos ou buscar_arquivos. Requer confirmação do usuário.",
+        "Prepara uma prévia para renomear um arquivo ou pasta. Use o caminho completo obtido por listar_arquivos ou buscar_arquivos. Requer confirmação do usuário.",
       parameters: {
         type: "object",
         properties: {
           caminho_arquivo: {
             type: "string",
-            description: "Caminho absoluto do arquivo a renomear",
+            description: "Caminho absoluto do arquivo ou pasta a renomear",
           },
           novo_nome: {
             type: "string",
-            description: "Novo nome do arquivo (incluindo extensão, ex: relatorio-final.pdf)",
+            description: "Novo nome (incluindo extensão se for arquivo, ex: relatorio-final.pdf)",
           },
         },
         required: ["caminho_arquivo", "novo_nome"],
       },
     },
     {
-      name: "mover_arquivo",
+      name: "mover_item",
       description:
-        "Prepara uma prévia para mover um arquivo para outro diretório autorizado. Use o caminho completo do arquivo. Requer confirmação do usuário.",
+        "Prepara uma prévia para mover um arquivo ou pasta para outro diretório autorizado. Use o caminho absoluto original. Requer confirmação do usuário.",
       parameters: {
         type: "object",
         properties: {
           caminho_arquivo: {
             type: "string",
-            description: "Caminho absoluto do arquivo a mover",
+            description: "Caminho absoluto do arquivo ou pasta a mover",
           },
           diretorio_destino: {
             type: "string",
@@ -298,18 +298,37 @@ const TOOLS = {
       },
     },
     {
-      name: "excluir_arquivo",
+      name: "excluir_item",
       description:
-        "Prepara uma prévia para excluir permanentemente um arquivo. Use apenas quando o usuário solicitar explicitamente a exclusão. Requer confirmação obrigatória.",
+        "Prepara uma prévia para excluir permanentemente um arquivo ou pasta. Use quando o usuário pedir para apagar ou deletar algo. Requer confirmação obrigatória.",
       parameters: {
         type: "object",
         properties: {
           caminho_arquivo: {
             type: "string",
-            description: "Caminho absoluto do arquivo a excluir",
+            description: "Caminho absoluto do arquivo ou pasta a excluir",
           },
         },
         required: ["caminho_arquivo"],
+      },
+    },
+    {
+      name: "pesquisar_na_internet",
+      description:
+        "Faz uma busca minuciosa no Google para responder perguntas sobre o mundo exterior, notícias atuais, cotações, previsões ou dados que não estão nos arquivos locais do usuário.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "O texto da pesquisa (ex: 'Notícias sobre IA hoje', 'Preço do café')",
+          },
+          foco: {
+            type: "string",
+            description: "Foco específico da busca, ex: 'análise técnica', 'notícias recentes'",
+          },
+        },
+        required: ["query"],
       },
     },
   ],
@@ -326,9 +345,10 @@ const TOOL_LABELS: Record<string, string> = {
   encontrar_duplicados: "Procurando duplicados",
   organizar_pasta: "Preparando organização",
   criar_pasta: "Preparando criação de pasta",
-  renomear_arquivo: "Preparando renomeação",
-  mover_arquivo: "Preparando movimentação",
-  excluir_arquivo: "Preparando exclusão",
+  renomear_item: "Preparando renomeação",
+  mover_item: "Preparando movimentação",
+  excluir_item: "Preparando exclusão",
+  pesquisar_na_internet: "Pesquisando na internet",
 };
 
 export class GeminiChatService {
@@ -734,7 +754,7 @@ export class GeminiChatService {
           }
         }
 
-        case "renomear_arquivo": {
+        case "renomear_item": {
           const caminho = args.caminho_arquivo as string;
           const novoNome = args.novo_nome as string;
           const fileName = path.basename(caminho);
@@ -751,7 +771,7 @@ export class GeminiChatService {
           return `Prévia de renomeação preparada: "${fileName}" → "${novoNome}". Aguardando confirmação.`;
         }
 
-        case "mover_arquivo": {
+        case "mover_item": {
           const caminho = args.caminho_arquivo as string;
           const destHint = args.diretorio_destino as string;
           const fileName = path.basename(caminho);
@@ -779,7 +799,7 @@ export class GeminiChatService {
           return `Prévia de movimentação preparada: "${fileName}" → "${destDir.name}". Aguardando confirmação.`;
         }
 
-        case "excluir_arquivo": {
+        case "excluir_item": {
           const caminho = args.caminho_arquivo as string;
           const fileName = path.basename(caminho);
 
@@ -792,6 +812,25 @@ export class GeminiChatService {
           });
 
           return `Prévia de exclusão preparada para "${fileName}". Aguardando confirmação obrigatória do usuário.`;
+        }
+
+        case "pesquisar_na_internet": {
+          const query = (args.query as string | undefined)?.trim();
+          const foco = (args.foco as string | undefined)?.trim();
+          if (!query) return "A busca na internet requer uma 'query'.";
+          
+          try {
+            const searchResult = await this.callGeminiTextWithSearch(
+              apiKey,
+              model,
+              "Você é um pesquisador experiente. Reúna detalhes cruciais sobre a solicitação usando a ferramenta do Google Search. Entregue um resumo completo, sem enrolação.",
+              foco ? `Faça uma pesquisa sobre: "${query}"\nFoco da pesquisa: ${foco}` : `Pesquise minuciosamente: "${query}"`,
+              2048
+            );
+            return `Resultados da Pesquisa Web:\n\n${searchResult}`;
+          } catch (error) {
+            return `Erro ao pesquisar na internet: ${error instanceof Error ? error.message : "Desconhecido"}`;
+          }
         }
 
         default:
@@ -995,13 +1034,16 @@ export class GeminiChatService {
       "",
       "Diretrizes:",
       "- Responda sempre em português brasileiro, de forma concisa e direta",
-      "- Use as ferramentas disponíveis para buscar informações antes de responder",
+      "- Use a ferramenta pesquisar_na_internet se o usuário fizer perguntas sobre o mundo exterior ou pedir um relatório cujos dados requerem internet (ex: 'Notícias de hoje', 'Cotação do dólar')",
+      "- **Menção de Arquivos Locals (@):** Quando o usuário menciona arquivos (identificado no topo da mensagem como '[Arquivos mencionados: ...]') e pede um relatório, análise ou reorganização, você DEVE extrair esses caminhos de arquivo e passá-los para as ferramentas correspondentes (ex: usar 'arquivos_base' em 'criar_relatorio' ou 'caminho_arquivo' em 'analisar_documento')",
+      "- Se houver arquivos marcados, priorize-os; se o tema for externo e não houver arquivos, use 'pesquisar_na_internet'",
+      "- Use suas ferramentas de sistema de arquivos para interagir com o desktop",
       "- Quando o usuário pedir para abrir um arquivo, use a ferramenta abrir_arquivo",
       "- Quando o usuário quiser entender, revisar ou resumir um documento, use analisar_documento",
       "- Quando o usuário quiser reorganizar conteúdo de .md, .docx, .pdf ou planilhas, use reorganizar_documento",
       "- Quando o usuário pedir um relatório novo, use criar_relatorio",
       "- Ao reorganizar um documento existente, preserve o original e crie uma nova versão",
-      "- Para ações destrutivas (organizar, mover, renomear), gere uma prévia com a ferramenta adequada — nunca execute diretamente",
+      "- Para ações destrutivas (excluir, mover, renomear arquivos/pastas), use as ferramentas de item adequadas e não as execute em bash",
       "- Quando listar arquivos, apresente-os de forma organizada e legível",
       "- Se não entender a solicitação, peça clarificação",
       "- Seja proativo: sugira ações relevantes com base no que encontrar",
@@ -1050,6 +1092,49 @@ export class GeminiChatService {
       throw new Error("O modelo não retornou conteúdo utilizável.");
     }
 
+    return text;
+  }
+
+  private async callGeminiTextWithSearch(
+    apiKey: string,
+    model: string,
+    systemInstruction: string,
+    prompt: string,
+    maxOutputTokens = 2048,
+  ) {
+    const response = await fetch(`${GEMINI_ENDPOINT}/${model}:generateContent`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: systemInstruction }] },
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        tools: [{ googleSearch: {} }],
+        generationConfig: {
+          temperature: 0.2, // Low temp for more factual search reporting
+          maxOutputTokens,
+        },
+      }),
+      signal: AbortSignal.timeout(45_000),
+    });
+
+    if (!response.ok) {
+      const payload = (await response.json()) as GeminiResponse;
+      throw new Error(
+        payload.error?.message ?? `Gemini respondeu com status ${response.status}`,
+      );
+    }
+
+    const payload = (await response.json()) as GeminiResponse;
+    const text = payload.candidates?.[0]?.content?.parts
+      ?.filter((part): part is { text: string } => "text" in part)
+      .map((part) => part.text)
+      .join("")
+      .trim();
+
+    if (!text) throw new Error("A pesquisa web falhou em retornar conteúdo.");
     return text;
   }
 
