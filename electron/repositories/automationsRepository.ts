@@ -3,6 +3,7 @@ import type { Automation } from "../../shared/types";
 
 interface Row {
   id: string;
+  project_id: string | null;
   name: string;
   description: string;
   command_text: string;
@@ -16,13 +17,22 @@ interface Row {
 export class AutomationsRepository {
   constructor(private readonly db: Database.Database) {}
 
-  list(): Automation[] {
-    const rows = this.db
-      .prepare("SELECT * FROM automations ORDER BY created_at DESC")
-      .all() as Row[];
+  list(projectId?: string): Automation[] {
+    let query = "SELECT * FROM automations";
+    const params: any[] = [];
+
+    if (projectId) {
+      query += " WHERE project_id = ?";
+      params.push(projectId);
+    }
+
+    query += " ORDER BY created_at DESC";
+
+    const rows = this.db.prepare(query).all(...params) as Row[];
 
     return rows.map((row) => ({
       id: row.id,
+      projectId: row.project_id ?? undefined,
       name: row.name,
       description: row.description,
       commandText: row.command_text,
@@ -39,16 +49,17 @@ export class AutomationsRepository {
       .prepare(
         `
           INSERT INTO automations (
-            id, name, description, command_text, schedule, enabled,
+            id, project_id, name, description, command_text, schedule, enabled,
             last_run_at, last_status, created_at
           ) VALUES (
-            @id, @name, @description, @command_text, @schedule, @enabled,
+            @id, @project_id, @name, @description, @command_text, @schedule, @enabled,
             @last_run_at, @last_status, @created_at
           )
         `,
       )
       .run({
         id: automation.id,
+        project_id: automation.projectId ?? null,
         name: automation.name,
         description: automation.description,
         command_text: automation.commandText,

@@ -28,7 +28,7 @@ const createWindow = async () => {
     return;
   }
 
-  await window.loadFile(path.join(process.cwd(), "dist", "index.html"));
+  await window.loadFile(path.join(__dirname, "..", "dist", "index.html"));
 };
 
 app.whenReady().then(createWindow);

@@ -42,7 +42,7 @@ export const MetricCard = ({
   const styles = accentStyles[accent];
 
   return (
-    <Card className="relative overflow-hidden border-border/60 bg-white shadow-sm transition-all duration-200 hover:border-border hover:shadow-md">
+    <Card className="relative overflow-hidden border-border/60 bg-card shadow-sm transition-all duration-200 hover:border-border hover:shadow-md">
       <div className={`absolute inset-x-0 top-0 h-0.5 ${styles.bar}`} />
       <CardContent className="p-5">
         <div className="flex items-start justify-between gap-3">

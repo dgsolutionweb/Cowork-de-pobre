@@ -52,8 +52,8 @@ export class AutomationService {
     return this.repository.list();
   }
 
-  list() {
-    return this.repository.list();
+  list(projectId?: string) {
+    return this.repository.list(projectId);
   }
 
   toggle(id: string, enabled: boolean) {
@@ -62,6 +62,7 @@ export class AutomationService {
   }
 
   create(input: {
+    projectId?: string;
     name: string;
     description: string;
     commandText: string;
@@ -70,6 +71,7 @@ export class AutomationService {
   }): Automation {
     const automation: Automation = {
       id: createId(),
+      projectId: input.projectId,
       name: input.name.trim(),
       description: input.description.trim(),
       commandText: input.commandText.trim(),
@@ -98,8 +100,9 @@ export class AutomationService {
     id: string,
     directories: Parameters<TaskExecutionService["previewCommand"]>[1],
     preferences: AppPreferences,
+    projectId?: string,
   ): Promise<ExecutionResult> {
-    const automation = this.repository.list().find((item) => item.id === id);
+    const automation = this.repository.list(projectId).find((item) => item.id === id);
 
     if (!automation) {
       throw new Error("Automação não encontrada.");
@@ -138,6 +141,9 @@ export class AutomationService {
           logs: ["Automação processada via inteligência artificial (Gemini)."],
           executedAt: new Date().toISOString(),
         };
+
+        // TODO: Save to history if needed?
+        // Actually executeDraft saves to history. chat doesn't automatically.
       } catch (error) {
         const message = error instanceof Error ? error.message : "Erro na automação via IA";
         result = {
@@ -151,7 +157,7 @@ export class AutomationService {
         };
       }
     } else {
-      result = await this.taskExecutionService.executeDraft(preview.draftId, directories);
+      result = await this.taskExecutionService.executeDraft(preview.draftId, directories, projectId);
     }
 
     this.repository.updateLastRun(id, result.executedAt, result.status);

@@ -93,7 +93,7 @@ export const HistoryPage = () => {
       inspector={
         <div className="flex h-full flex-col gap-4">
           <div>
-            <Badge variant="outline" className="bg-white text-[9px] px-1.5 py-0">
+            <Badge variant="outline" className="bg-card text-[9px] px-1.5 py-0">
               SQLite local
             </Badge>
             <h3 className="mt-2.5 text-sm font-semibold tracking-tight text-foreground">
@@ -114,7 +114,7 @@ export const HistoryPage = () => {
             ].map(({ label, value, color }) => (
               <div
                 key={label}
-                className="rounded-lg border border-border/50 bg-white p-2.5 text-center shadow-sm"
+                className="rounded-lg border border-border/50 bg-card p-2.5 text-center shadow-sm"
               >
                 <p className={`text-lg font-bold ${color}`}>{value}</p>
                 <p className="text-[10px] text-muted-foreground">{label}</p>
@@ -156,7 +156,7 @@ export const HistoryPage = () => {
             className={`rounded-full border px-3 py-1 text-[11px] font-medium transition-colors ${
               statusFilter === f.value
                 ? "border-foreground bg-foreground text-background"
-                : "border-border/60 bg-white text-muted-foreground hover:border-foreground/30 hover:text-foreground"
+                : "border-border/60 bg-card text-muted-foreground hover:border-foreground/30 hover:text-foreground"
             }`}
           >
             {f.label}

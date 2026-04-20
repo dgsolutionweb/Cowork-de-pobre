@@ -4,8 +4,8 @@ import { HistoryRepository } from "../repositories/historyRepository";
 export class HistoryService {
   constructor(private readonly repository: HistoryRepository) {}
 
-  list() {
-    return this.repository.list();
+  list(projectId?: string) {
+    return this.repository.list(projectId);
   }
 
   save(entry: HistoryEntry) {

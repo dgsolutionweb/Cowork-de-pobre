@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AuthorizedDirectory,
   CommandPreview,
+  ConversationMessage,
+  ConversationSummary,
   FileItem,
   PendingFileOperation,
-  ConversationMessage,
+  ProjectDetail,
 } from "@shared/types";
 import {
   AlertTriangle,
@@ -12,10 +14,12 @@ import {
   Bot,
   CheckCircle2,
   ChevronRight,
+  Clock3,
   File,
   FileImage,
   FileText,
   Loader2,
+  MessageSquare,
   MoveRight,
   Pencil,
   RefreshCw,
@@ -89,8 +93,15 @@ const TOOL_LABELS: Record<string, string> = {
   organizar_pasta: "Preparou organização",
   criar_pasta: "Preparou criação de pasta",
   renomear_arquivo: "Preparou renomeação",
+  renomear_item: "Preparou renomeação",
   mover_arquivo: "Preparou movimentação",
+  mover_item: "Preparou movimentação",
   excluir_arquivo: "Preparou exclusão",
+  excluir_item: "Preparou exclusão",
+  pesquisar_na_internet: "Pesquisou na internet",
+  agente_pesquisa: "Pesquisa profunda",
+  salvar_memoria_projeto: "Salvou memória",
+  buscar_nos_conectores: "Buscou nos conectores",
 };
 
 // ─── File icon helper ─────────────────────────────────────────────────────────
@@ -679,6 +690,8 @@ export const AssistantPage = () => {
   const [availableFiles, setAvailableFiles] = useState<FileItem[]>([]);
   const [availableDirs, setAvailableDirs] = useState<AuthorizedDirectory[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<FileItem[]>([]);
+  const [activeProject, setActiveProject] = useState<ProjectDetail | null>(null);
+  const [allProjects, setAllProjects] = useState<any[]>([]);
 
   // File action dialogs
   const [renameTarget, setRenameTarget] = useState<FileItem | null>(null);
@@ -689,6 +702,8 @@ export const AssistantPage = () => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const inputWrapperRef = useRef<HTMLDivElement>(null);
 
+  const [convList, setConvList] = useState<ConversationSummary[]>([]);
+
   const {
     conversationId,
     messages,
@@ -697,7 +712,46 @@ export const AssistantPage = () => {
     removeLoadingMessage,
     setResult,
     resetConversation,
+    loadConversation,
   } = useAssistantStore();
+
+  const saveConversation = useCallback(
+    (msgs: ConversationMessage[]) => {
+      const realMessages = msgs.filter((m) => !m.isLoading);
+      if (realMessages.length <= 1) return;
+      const firstUser = realMessages.find((m) => m.role === "user");
+      const title = firstUser
+        ? firstUser.text.slice(0, 60) + (firstUser.text.length > 60 ? "…" : "")
+        : "Conversa sem título";
+      desktop()
+        .conversations.save({
+          id: conversationId,
+          title,
+          createdAt: realMessages[0].timestamp,
+          updatedAt: new Date().toISOString(),
+          messages: realMessages,
+        })
+        .catch(() => {});
+    },
+    [conversationId],
+  );
+
+  const loadConvList = () => {
+    desktop()
+      .conversations.list()
+      .then(setConvList)
+      .catch(() => {});
+  };
+
+  const handleLoadConversation = async (id: string) => {
+    const conv = await desktop().conversations.get(id).catch(() => null);
+    if (conv) loadConversation(conv);
+  };
+
+  const handleDeleteConversation = async (id: string) => {
+    await desktop().conversations.delete(id).catch(() => {});
+    loadConvList();
+  };
 
   const fetchFiles = () => {
     desktop()
@@ -711,9 +765,33 @@ export const AssistantPage = () => {
 
   useEffect(() => {
     fetchFiles();
+    loadConvList();
+
+    desktop().projects.list().then(setAllProjects).catch(console.error);
+
+    desktop()
+      .settings.getPreferences()
+      .then((prefs) => {
+        if (prefs.activeProjectId) {
+          desktop().projects.get(prefs.activeProjectId).then(setActiveProject).catch(console.error);
+        } else {
+          setActiveProject(null);
+        }
+      })
+      .catch(console.error);
+
     window.addEventListener("focus", fetchFiles);
     return () => window.removeEventListener("focus", fetchFiles);
   }, []);
+
+  const handleContextChange = async (projectId: string) => {
+    await desktop().settings.updatePreferences({ activeProjectId: projectId === "global" ? "" : projectId });
+    if (projectId === "global") {
+      setActiveProject(null);
+    } else {
+      desktop().projects.get(projectId).then(setActiveProject).catch(console.error);
+    }
+  };
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -815,7 +893,7 @@ export const AssistantPage = () => {
 
       removeLoadingMessage();
 
-      appendMessage({
+      const assistantMsg: ConversationMessage = {
         id: crypto.randomUUID(),
         role: "assistant",
         text: response.assistantText,
@@ -823,7 +901,15 @@ export const AssistantPage = () => {
         pendingPreviews: response.pendingPreviews,
         pendingFileOps: response.pendingFileOps,
         timestamp: new Date().toISOString(),
-      });
+      };
+      appendMessage(assistantMsg);
+
+      // persist after DOM update
+      setTimeout(() => {
+        const { messages: latest } = useAssistantStore.getState();
+        saveConversation(latest);
+        loadConvList();
+      }, 100);
     } catch (error) {
       removeLoadingMessage();
       const msg = error instanceof Error ? error.message : "Falha ao processar sua mensagem.";
@@ -930,7 +1016,7 @@ export const AssistantPage = () => {
         inspector={
           <div className="flex h-full flex-col gap-4">
             <div>
-              <Badge variant="outline" className="bg-white text-[9px] px-1.5 py-0">
+              <Badge variant="outline" className="bg-card text-[9px] px-1.5 py-0">
                 Motor IA
               </Badge>
               <h3 className="mt-2.5 text-sm font-semibold tracking-tight text-foreground">
@@ -942,12 +1028,79 @@ export const AssistantPage = () => {
               </p>
             </div>
 
+            <div className="mt-4">
+              <label className="text-[11px] font-semibold text-foreground uppercase tracking-widest block mb-2">Contexto Ativo</label>
+              <select
+                value={activeProject ? activeProject.project.id : "global"}
+                onChange={(e) => handleContextChange(e.target.value)}
+                className="w-full rounded-xl border border-border/60 bg-card px-3 py-2 text-[12px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+              >
+                <option value="global">🌐 Escopos Locais / Global</option>
+                <optgroup label="Projetos">
+                  {allProjects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </optgroup>
+              </select>
+              <p className="mt-1.5 text-[10px] text-muted-foreground leading-relaxed">
+                {activeProject ? "Agente atuando dentro das memórias e arquivos deste projeto." : "Agente atuando sobre os arquivos liberados em Escopos Locais."}
+              </p>
+            </div>
+
+            {activeProject && (
+              <Card className="shadow-sm border-primary/20 bg-primary/5 mt-2">
+                <CardHeader className="p-4 pb-2">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="size-3.5 text-primary" />
+                    <CardTitle className="text-[10px] font-bold uppercase tracking-wider text-primary">
+                      Projeto Ativo
+                    </CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-4 pt-0">
+                  <p className="text-[13px] font-semibold text-foreground">
+                    {activeProject.project.name}
+                  </p>
+                  <div className="mt-2 space-y-1">
+                    {activeProject.instructions.length > 0 && (
+                      <div className="flex items-start gap-1.5">
+                        <MessageSquare className="size-3 mt-0.5 text-primary/70" />
+                        <p className="text-[10px] text-muted-foreground leading-snug">
+                          {activeProject.instructions.length} instruções ativas
+                        </p>
+                      </div>
+                    )}
+                    {activeProject.contextItems.length > 0 && (
+                      <div className="flex items-start gap-1.5">
+                        <AtSign className="size-3 mt-0.5 text-primary/70" />
+                        <p className="text-[10px] text-muted-foreground leading-snug">
+                          {activeProject.contextItems.length} itens de contexto fixados
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="mt-3 h-6 w-full text-[10px] font-medium hover:bg-primary/10 hover:text-primary transition-colors"
+                    onClick={() => (window.location.hash = "/projects")}
+                  >
+                    Gerenciar Projeto
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+
             <Button
               variant="outline"
               size="sm"
               onClick={() => {
+                saveConversation(messages);
                 resetConversation();
                 setAttachedFiles([]);
+                setTimeout(loadConvList, 150);
               }}
               className="w-full h-8 text-[12px] gap-1.5"
             >
@@ -1000,6 +1153,38 @@ export const AssistantPage = () => {
                 ))}
               </CardContent>
             </Card>
+
+            {convList.length > 0 && (
+              <Card className="shadow-sm border-border/50">
+                <CardHeader className="p-3 pb-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <MessageSquare className="size-3 text-muted-foreground" />
+                    <CardTitle className="text-xs">Histórico de conversas</CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-1 p-3 pt-0">
+                  {convList.slice(0, 8).map((conv) => (
+                    <div key={conv.id} className="group flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleLoadConversation(conv.id)}
+                        className="flex flex-1 items-center gap-1.5 rounded-lg border border-border/50 bg-muted/20 px-2.5 py-2 text-left transition-colors hover:bg-muted/50 min-w-0"
+                      >
+                        <Clock3 className="size-3 shrink-0 text-muted-foreground/60" />
+                        <span className="truncate text-[11px] font-medium text-foreground">{conv.title}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteConversation(conv.id)}
+                        className="invisible flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-destructive group-hover:visible"
+                      >
+                        <Trash2 className="size-3" />
+                      </button>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
           </div>
         }
       >

@@ -57,6 +57,7 @@ export class TaskExecutionService {
   async executeDraft(
     draftId: string,
     directories: AuthorizedDirectory[],
+    projectId?: string,
   ): Promise<ExecutionResult> {
     const draft = this.drafts.get(draftId);
 
@@ -87,6 +88,7 @@ export class TaskExecutionService {
 
       const historyEntry: HistoryEntry = {
         id: historyId,
+        projectId,
         commandText: draft.preview.commandText,
         intent: draft.preview.parsed.intent,
         status: result.status,
@@ -114,6 +116,7 @@ export class TaskExecutionService {
 
       this.historyService.save({
         id: historyId,
+        projectId,
         commandText: draft.preview.commandText,
         intent: draft.preview.parsed.intent,
         status: failure.status,

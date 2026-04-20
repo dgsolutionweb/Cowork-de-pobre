@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { AppPreferences, AuthorizedDirectory } from "@shared/types";
-import { Eye, EyeOff, FolderPlus, KeyRound, ShieldCheck, Sparkles, Trash2 } from "lucide-react";
+import { Bell, BellOff, Eye, EyeOff, FolderPlus, KeyRound, MessageSquare, ShieldCheck, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/layouts/app-shell";
 import { desktop } from "@/services/desktop";
@@ -10,12 +10,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 
-export const SettingsPage = () => {
+interface SettingsPageProps {
+  onPrefsChange?: (prefs: AppPreferences) => void;
+}
+
+export const SettingsPage = ({ onPrefsChange }: SettingsPageProps) => {
   const [preferences, setPreferences] = useState<AppPreferences | null>(null);
   const [directories, setDirectories] = useState<AuthorizedDirectory[]>([]);
   const [geminiApiKeyDraft, setGeminiApiKeyDraft] = useState("");
+  const [customPromptDraft, setCustomPromptDraft] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
   const [savingGemini, setSavingGemini] = useState(false);
+  const [savingPrompt, setSavingPrompt] = useState(false);
 
   const load = async () => {
     const [nextPreferences, nextDirectories] = await Promise.all([
@@ -26,6 +32,7 @@ export const SettingsPage = () => {
     setPreferences(nextPreferences);
     setDirectories(nextDirectories);
     setGeminiApiKeyDraft(nextPreferences.geminiApiKey ?? "");
+    setCustomPromptDraft(nextPreferences.customSystemPrompt ?? "");
   };
 
   useEffect(() => {
@@ -39,6 +46,8 @@ export const SettingsPage = () => {
     const next = await desktop().settings.updatePreferences(partial);
     setPreferences(next);
     setGeminiApiKeyDraft(next.geminiApiKey ?? "");
+    setCustomPromptDraft(next.customSystemPrompt ?? "");
+    onPrefsChange?.(next);
     toast.success(successMessage);
   };
 
@@ -58,19 +67,31 @@ export const SettingsPage = () => {
 
   const saveGeminiSettings = async () => {
     setSavingGemini(true);
-
     try {
       await updatePreferences(
-        {
-          geminiApiKey: geminiApiKeyDraft,
-          geminiModel: "gemini-2.5-flash",
-        },
-        geminiApiKeyDraft.trim().length > 0
-          ? "Chave do Gemini salva."
-          : "Chave do Gemini removida.",
+        { geminiApiKey: geminiApiKeyDraft, geminiModel: "gemini-2.5-flash" },
+        geminiApiKeyDraft.trim().length > 0 ? "Chave do Gemini salva." : "Chave do Gemini removida.",
       );
     } finally {
       setSavingGemini(false);
+    }
+  };
+
+  const saveCustomPrompt = async () => {
+    setSavingPrompt(true);
+    try {
+      await updatePreferences({ customSystemPrompt: customPromptDraft.trim() }, "Prompt personalizado salvo.");
+    } finally {
+      setSavingPrompt(false);
+    }
+  };
+
+  const testNotification = async () => {
+    try {
+      await desktop().notifications.test();
+      toast.success("Notificação de teste enviada.");
+    } catch {
+      toast.error("Erro ao enviar notificação.");
     }
   };
 
@@ -81,7 +102,7 @@ export const SettingsPage = () => {
       inspector={
         <div className="flex h-full flex-col gap-4">
           <div>
-            <Badge variant="outline" className="bg-white text-[9px] px-1.5 py-0">Segurança</Badge>
+            <Badge variant="outline" className="bg-card text-[9px] px-1.5 py-0">Segurança</Badge>
             <h3 className="mt-2.5 text-sm font-semibold tracking-tight text-foreground">Guard rails locais</h3>
             <p className="mt-1 text-[12px] text-muted-foreground leading-relaxed">
               As configurações são persistidas em banco local e usadas pelo processo principal do Electron.
@@ -203,13 +224,13 @@ export const SettingsPage = () => {
                   placeholder="Cole sua chave da API do Gemini"
                   autoComplete="off"
                   spellCheck={false}
-                  className="bg-white shadow-sm h-8 text-[12px]"
+                  className="bg-card shadow-sm h-8 text-[12px]"
                 />
                 <Button
                   variant="outline"
                   onClick={() => setShowApiKey((current) => !current)}
                   aria-label={showApiKey ? "Ocultar chave" : "Mostrar chave"}
-                  className="shadow-sm bg-white h-8 w-8 px-0"
+                  className="shadow-sm bg-card h-8 w-8 px-0"
                 >
                   {showApiKey ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
                 </Button>
@@ -232,6 +253,75 @@ export const SettingsPage = () => {
                 </div>
               </div>
             </div>
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-sm border-border/60">
+          <CardHeader className="p-5 pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <MessageSquare className="size-4" />
+              Prompt personalizado
+            </CardTitle>
+            <CardDescription className="text-[12px]">Instruções adicionais injetadas no sistema do Gemini.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3 p-5 pt-0">
+            <textarea
+              value={customPromptDraft}
+              onChange={(e) => setCustomPromptDraft(e.target.value)}
+              placeholder="Ex.: Sempre responda em português formal. Prefira renomear arquivos usando snake_case."
+              rows={4}
+              className="w-full resize-none rounded-xl border border-border/60 bg-muted/20 px-4 py-2.5 text-[13px] text-foreground placeholder:text-muted-foreground/60 focus:border-primary/40 focus:bg-background focus:outline-none transition-colors"
+            />
+            <Button
+              onClick={saveCustomPrompt}
+              disabled={savingPrompt}
+              className="h-9"
+            >
+              {savingPrompt ? "Salvando..." : "Salvar prompt"}
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-sm border-border/60">
+          <CardHeader className="p-5 pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Bell className="size-4" />
+              Notificações
+            </CardTitle>
+            <CardDescription className="text-[12px]">Alertas nativos ao completar automações e detectar arquivos.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3 p-5 pt-0">
+            <div className="flex items-center justify-between gap-4 rounded-lg border border-border/50 bg-muted/30 p-3 shadow-sm">
+              <div className="flex items-center gap-2">
+                {preferences?.notificationsEnabled ? (
+                  <Bell className="size-3.5 text-primary" />
+                ) : (
+                  <BellOff className="size-3.5 text-muted-foreground" />
+                )}
+                <div>
+                  <p className="text-[13px] font-medium text-foreground">Ativar notificações</p>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">
+                    Notificações do sistema ao concluir tarefas.
+                  </p>
+                </div>
+              </div>
+              <Switch
+                className="scale-75"
+                checked={preferences?.notificationsEnabled ?? true}
+                onCheckedChange={(checked) =>
+                  updatePreferences({ notificationsEnabled: checked })
+                }
+              />
+            </div>
+            <Button
+              variant="outline"
+              onClick={testNotification}
+              disabled={!preferences?.notificationsEnabled}
+              className="gap-2 h-9"
+            >
+              <Bell className="size-3.5" />
+              Testar notificação
+            </Button>
           </CardContent>
         </Card>
       </div>

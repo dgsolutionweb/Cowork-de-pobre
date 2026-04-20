@@ -3,6 +3,7 @@ import type { FileItem, HistoryEntry } from "../../shared/types";
 
 interface Row {
   id: string;
+  project_id: string | null;
   command_text: string;
   intent: string;
   status: string;
@@ -17,13 +18,22 @@ interface Row {
 export class HistoryRepository {
   constructor(private readonly db: Database.Database) {}
 
-  list(): HistoryEntry[] {
-    const rows = this.db
-      .prepare("SELECT * FROM task_history ORDER BY created_at DESC LIMIT 30")
-      .all() as Row[];
+  list(projectId?: string): HistoryEntry[] {
+    let query = "SELECT * FROM task_history";
+    const params: any[] = [];
+
+    if (projectId) {
+      query += " WHERE project_id = ?";
+      params.push(projectId);
+    }
+
+    query += " ORDER BY created_at DESC LIMIT 30";
+
+    const rows = this.db.prepare(query).all(...params) as Row[];
 
     return rows.map((row) => ({
       id: row.id,
+      projectId: row.project_id ?? undefined,
       commandText: row.command_text,
       intent: row.intent as HistoryEntry["intent"],
       status: row.status as HistoryEntry["status"],
@@ -41,16 +51,17 @@ export class HistoryRepository {
       .prepare(
         `
           INSERT INTO task_history (
-            id, command_text, intent, status, confirmed, summary,
+            id, project_id, command_text, intent, status, confirmed, summary,
             affected_files_json, error_message, created_at, executed_at
           ) VALUES (
-            @id, @command_text, @intent, @status, @confirmed, @summary,
+            @id, @project_id, @command_text, @intent, @status, @confirmed, @summary,
             @affected_files_json, @error_message, @created_at, @executed_at
           )
         `,
       )
       .run({
         id: entry.id,
+        project_id: entry.projectId ?? null,
         command_text: entry.commandText,
         intent: entry.intent,
         status: entry.status,

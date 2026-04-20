@@ -28,7 +28,7 @@ export const AppShell = ({ title, subtitle, inspector, children }: AppShellProps
         </div>
       </div>
 
-      <main className="flex flex-1 flex-col overflow-hidden bg-white shadow-sm sm:rounded-tl-2xl sm:border-t sm:border-l sm:border-border/60 relative transition-all duration-300">
+      <main className="flex flex-1 flex-col overflow-hidden bg-background sm:rounded-tl-2xl sm:border-t sm:border-l sm:border-border/60 relative transition-all duration-300">
         <div className="flex h-full w-full overflow-hidden">
           <div className="flex-1 overflow-y-auto px-6 py-5 md:px-8">
             <div className="mx-auto flex max-w-4xl flex-col">
@@ -81,7 +81,7 @@ export const AppShell = ({ title, subtitle, inspector, children }: AppShellProps
           {inspector && (
             <div
               className={cn(
-                "transition-[width,opacity] duration-300 ease-in-out overflow-hidden flex-shrink-0 flex border-l border-border/50 bg-white/[0.98]",
+                "transition-[width,opacity] duration-300 ease-in-out overflow-hidden flex-shrink-0 flex border-l border-border/50 bg-card",
                 rightOpen ? "w-[240px] lg:w-[280px] opacity-100" : "w-0 opacity-0 border-l-0"
               )}
             >

@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
-import type { Require } from "node:module";
 import path from "node:path";
 import mammoth from "mammoth";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
@@ -29,7 +28,7 @@ export type ReadDocumentResult = {
 const TEXT_DOCUMENT_EXTENSIONS = new Set([".md", ".txt", ".docx", ".pdf"]);
 const SPREADSHEET_EXTENSIONS = new Set([".xlsx", ".xls", ".csv"]);
 
-const headingMap: Record<number, HeadingLevel> = {
+const headingMap: Record<number, (typeof HeadingLevel)[keyof typeof HeadingLevel]> = {
   1: HeadingLevel.HEADING_1,
   2: HeadingLevel.HEADING_2,
   3: HeadingLevel.HEADING_3,
@@ -242,7 +241,7 @@ const ensurePdfPolyfills = () => {
       lineTo() {}
       closePath() {}
       rect() {}
-    } as typeof Path2D;
+    } as unknown as typeof Path2D;
   }
 };
 
@@ -502,6 +501,49 @@ export class DocumentService {
       default:
         throw new Error(`Formato de saída não suportado: ${format}`);
     }
+  }
+
+  public async writeExcel(
+    filePath: string,
+    sheets: Record<string, any[][]>,
+    allowedPaths: string[]
+  ) {
+    const finalPath = await this.resolveUniquePath(filePath);
+    ensureAllowedPath(finalPath, allowedPaths, "Criação de planilha");
+
+    const wb = XLSX.utils.book_new();
+
+    for (const [sheetName, rows] of Object.entries(sheets)) {
+      // Process the rows to inject formulas if a string starts with '='
+      const processedRows = rows.map((row) =>
+        row.map((cell) => {
+          if (typeof cell === "string" && cell.startsWith("=")) {
+            // Treat as formula
+            return { f: cell.substring(1) };
+          }
+          return cell;
+        })
+      );
+
+      const ws = XLSX.utils.aoa_to_sheet(processedRows);
+      
+      // Auto-fit columns roughly
+      const colWidths = [];
+      for (const row of rows) {
+        for (let i = 0; i < row.length; i++) {
+          const content = String(row[i] || "");
+          if (!colWidths[i]) colWidths[i] = 10;
+          if (content.length > colWidths[i]) colWidths[i] = Math.min(content.length + 2, 50);
+        }
+      }
+      ws["!cols"] = colWidths.map((w) => ({ wch: w }));
+
+      XLSX.utils.book_append_sheet(wb, ws, sheetName.substring(0, 31));
+    }
+
+    const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+    await fsPromises.writeFile(finalPath, buffer);
+    return finalPath;
   }
 
   private async writeDocx(filePath: string, markdown: string) {

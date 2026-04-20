@@ -1,0 +1,48 @@
+appId: com.douglasrodrigues.cowork
+productName: Cowork
+copyright: Copyright © 2025 Douglas Rodrigues
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - "!**/*.ts"
+  - "!**/*.map"
+
+asarUnpack:
+  - node_modules/better-sqlite3/**/*
+  - node_modules/pdf-parse/**/*
+
+afterSign: scripts/after-sign.cjs
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  appId: com.douglasrodrigues.cowork
+  icon: build/icon.icns
+  minimumSystemVersion: "11.0"
+  hardenedRuntime: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  category: public.app-category.productivity
+
+dmg:
+  title: "Cowork ${version}"
+  format: ULFO
+  window:
+    width: 540
+    height: 412
+  contents:
+    - x: 130
+      y: 220
+      type: file
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications

@@ -1,0 +1,9 @@
+{
+  "language": "portuguese",
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+    "ANTHROPIC_AUTH_TOKEN": "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",
+    "ANTHROPIC_API_KEY": "",
+    "ANTHROPIC_MODEL": "minimax/minimax-m2.5:free"
+  }
+}

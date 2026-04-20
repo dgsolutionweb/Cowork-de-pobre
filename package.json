@@ -1,7 +1,7 @@
 {
   "name": "cowork-local-ai",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.2",
   "type": "module",
   "description": "Assistente local de produtividade com Electron, React e SQLite.",
   "main": "dist-electron/main.cjs",
@@ -13,7 +13,10 @@
     "dev:electron:start": "wait-on dist-electron/main.cjs tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electronmon dist-electron/main.cjs",
     "build": "vite build && npm run build:electron",
     "build:electron": "esbuild electron/main.ts electron/preload.ts --bundle --platform=node --format=cjs --outdir=dist-electron --out-extension:.js=.cjs --external:electron --external:better-sqlite3 --external:pdf-parse",
-    "start": "electron dist-electron/main.cjs"
+    "start": "electron dist-electron/main.cjs",
+    "postinstall": "electron-builder install-app-deps",
+    "dist": "npm run build && electron-builder --mac dmg",
+    "dist:unsigned": "CSC_IDENTITY_AUTO_DISCOVERY=false npm run build && electron-builder --mac dmg"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.3",
@@ -48,6 +51,7 @@
     "concurrently": "^9.1.0",
     "cross-env": "^7.0.3",
     "electron": "^33.2.1",
+    "electron-builder": "^26.8.1",
     "electronmon": "^2.0.3",
     "esbuild": "^0.24.0",
     "postcss": "^8.4.49",

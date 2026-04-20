@@ -6,12 +6,16 @@ import type {
   BrowseFilesInput,
   FileExplorerData,
   FileItem,
+  FilePreviewResult,
 } from "../../shared/types";
 import { ensureAllowedPath } from "../utils/pathSafety";
 import { hashFile } from "../utils/fileHash";
+import type { VaultService } from "./vaultService";
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const PDF_EXTENSIONS = new Set([".pdf"]);
+const TEXT_EXTENSIONS = new Set([".md", ".txt", ".csv", ".js", ".ts", ".py", ".json", ".xml", ".html", ".css"]);
+const SPREADSHEET_EXTENSIONS = new Set([".xlsx", ".xls", ".csv"]);
 const HIDDEN_FILE_NAMES = new Set([".ds_store", "thumbs.db", "desktop.ini"]);
 const SKIPPED_DIRECTORY_NAMES = new Set([
   ".git",
@@ -66,6 +70,12 @@ const shouldSkipDirectory = (name: string) => {
 };
 
 export class FileService {
+  private vaultService: VaultService | null = null;
+
+  setVaultService(vs: VaultService): void {
+    this.vaultService = vs;
+  }
+
   async browseAuthorizedFiles(
     directories: AuthorizedDirectory[],
     input: BrowseFilesInput = {},
@@ -95,7 +105,6 @@ export class FileService {
         .slice(0, limit)
         .map((entry) => fileToItem(path.join(directory.path, entry.name), directory.name)),
     );
-
     return files;
   }
 
@@ -171,7 +180,6 @@ export class FileService {
 
     for (const file of files) {
       ensureAllowedPath(file.path, allowedPaths, "Movimentação");
-
       const targetPath = await this.resolveUniquePath(
         path.join(destinationDirectory, file.name),
       );
@@ -192,14 +200,12 @@ export class FileService {
 
     for (const [index, file] of files.entries()) {
       ensureAllowedPath(file.path, allowedPaths, "Renomeação");
-
       const directoryPath = path.dirname(file.path);
       const extension = file.extension || "";
       const targetName = `${stamp}-${labelPrefix}-${String(index + 1).padStart(2, "0")}${extension}`;
       const targetPath = await this.resolveUniquePath(
         path.join(directoryPath, targetName),
       );
-
       await fs.rename(file.path, targetPath);
       renamedFiles.push(await fileToItem(targetPath));
     }
@@ -234,13 +240,148 @@ export class FileService {
     return fileToItem(targetPath);
   }
 
-  async deleteSingleFile(filePath: string, allowedPaths: string[]): Promise<void> {
+  async deleteSingleFile(
+    filePath: string,
+    allowedPaths: string[],
+    vaultMode = false,
+  ): Promise<void> {
     ensureAllowedPath(filePath, allowedPaths, "Exclusão");
+
+    if (vaultMode && this.vaultService) {
+      await this.vaultService.moveToVault(filePath);
+      return;
+    }
+
     try {
       await shell.trashItem(filePath);
-    } catch (error) {
+    } catch {
       await fs.rm(filePath, { recursive: true, force: true });
     }
+  }
+
+  async deleteMany(
+    filePaths: string[],
+    allowedPaths: string[],
+    vaultMode = false,
+  ): Promise<{ deleted: number; vaulted: number }> {
+    let deleted = 0;
+    let vaulted = 0;
+
+    for (const filePath of filePaths) {
+      try {
+        ensureAllowedPath(filePath, allowedPaths, "Exclusão em lote");
+        if (vaultMode && this.vaultService) {
+          await this.vaultService.moveToVault(filePath);
+          vaulted++;
+        } else {
+          try {
+            await shell.trashItem(filePath);
+          } catch {
+            await fs.rm(filePath, { recursive: true, force: true });
+          }
+          deleted++;
+        }
+      } catch {}
+    }
+
+    return { deleted, vaulted };
+  }
+
+  async moveMany(
+    filePaths: string[],
+    destDirPath: string,
+    allowedPaths: string[],
+  ): Promise<{ moved: number; failed: number }> {
+    ensureAllowedPath(destDirPath, allowedPaths, "Movimentação em lote");
+    await fs.mkdir(destDirPath, { recursive: true });
+
+    let moved = 0;
+    let failed = 0;
+
+    for (const filePath of filePaths) {
+      try {
+        ensureAllowedPath(filePath, allowedPaths, "Movimentação em lote");
+        const target = await this.resolveUniquePath(
+          path.join(destDirPath, path.basename(filePath)),
+        );
+        await fs.rename(filePath, target);
+        moved++;
+      } catch {
+        failed++;
+      }
+    }
+
+    return { moved, failed };
+  }
+
+  async renameWithPattern(
+    filePaths: string[],
+    pattern: string,
+    allowedPaths: string[],
+  ): Promise<{ renamed: number }> {
+    let renamed = 0;
+
+    for (const [index, filePath] of filePaths.entries()) {
+      try {
+        ensureAllowedPath(filePath, allowedPaths, "Renomeação em lote");
+        const dir = path.dirname(filePath);
+        const ext = path.extname(filePath);
+        const num = String(index + 1).padStart(2, "0");
+        const stamp = new Date().toISOString().slice(0, 10).replaceAll("-", "");
+        const newName = pattern
+          .replace("{n}", num)
+          .replace("{stamp}", stamp)
+          .replace("{ext}", ext)
+          + (pattern.includes("{ext}") ? "" : ext);
+        const target = await this.resolveUniquePath(path.join(dir, newName));
+        await fs.rename(filePath, target);
+        renamed++;
+      } catch {}
+    }
+
+    return { renamed };
+  }
+
+  async previewFile(filePath: string, allowedPaths: string[]): Promise<FilePreviewResult> {
+    ensureAllowedPath(filePath, allowedPaths, "Prévia");
+    const stats = await fs.stat(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+
+    if (IMAGE_EXTENSIONS.has(ext)) {
+      const buffer = await fs.readFile(filePath);
+      const mime =
+        ext === ".png" ? "image/png"
+        : ext === ".gif" ? "image/gif"
+        : ext === ".webp" ? "image/webp"
+        : "image/jpeg";
+      return {
+        path: filePath,
+        kind: "image",
+        base64Image: buffer.toString("base64"),
+        imageMimeType: mime,
+        size: stats.size,
+      };
+    }
+
+    if (TEXT_EXTENSIONS.has(ext) || ext === ".docx" || ext === ".md" || ext === ".txt") {
+      try {
+        const raw = await fs.readFile(filePath, "utf-8");
+        return {
+          path: filePath,
+          kind: "text",
+          textPreview: raw.slice(0, 4000),
+          size: stats.size,
+        };
+      } catch {
+        return { path: filePath, kind: "binary", size: stats.size };
+      }
+    }
+
+    if (PDF_EXTENSIONS.has(ext)) {
+      return { path: filePath, kind: "pdf", size: stats.size };
+    }
+
+    return { path: filePath, kind: "binary", size: stats.size };
   }
 
   async createDirectory(
@@ -254,16 +395,10 @@ export class FileService {
 
   async openFile(filePath: string, allowedPaths: string[]): Promise<void> {
     ensureAllowedPath(filePath, allowedPaths, "Abertura");
-
     const stats = await fs.stat(filePath);
-    if (!stats.isFile()) {
-      throw new Error("O caminho informado não é um arquivo.");
-    }
-
+    if (!stats.isFile()) throw new Error("O caminho informado não é um arquivo.");
     const openError = await shell.openPath(filePath);
-    if (openError) {
-      throw new Error(openError);
-    }
+    if (openError) throw new Error(openError);
   }
 
   private async scanMany(
@@ -285,15 +420,17 @@ export class FileService {
     const results: FileItem[] = [];
 
     for (const directory of directories) {
-      await this.scanDirectory(directory.path, directory.name, results, {
-        query: filters.query,
-        extensions,
-        limit: filters.limit,
-      });
-
-      if (results.length >= filters.limit) {
-        break;
+      try {
+        await this.scanDirectory(directory.path, directory.name, results, {
+          query: filters.query,
+          extensions,
+          limit: filters.limit,
+        });
+      } catch {
+        // Ignore unreadable directories so one protected subtree does not
+        // prevent newly authorized folders from appearing in the UI.
       }
+      if (results.length >= filters.limit) break;
     }
 
     return results
@@ -311,27 +448,27 @@ export class FileService {
       limit: number;
     },
   ) {
-    if (collector.length >= filters.limit) {
+    if (collector.length >= filters.limit) return;
+
+    let entries: Awaited<ReturnType<typeof fs.readdir>>;
+    try {
+      entries = await fs.readdir(directoryPath, { withFileTypes: true });
+    } catch {
       return;
     }
 
-    const entries = await fs.readdir(directoryPath, { withFileTypes: true });
-
     for (const entry of entries) {
-      if (collector.length >= filters.limit) {
-        return;
-      }
-
-      if (entry.isDirectory() && shouldSkipDirectory(entry.name)) {
-        continue;
-      }
-
-      if (entry.isFile() && isHiddenOrSystemName(entry.name)) {
-        continue;
-      }
+      if (collector.length >= filters.limit) return;
+      if (entry.isDirectory() && shouldSkipDirectory(entry.name)) continue;
+      if (entry.isFile() && isHiddenOrSystemName(entry.name)) continue;
 
       const absolutePath = path.join(directoryPath, entry.name);
-      const item = await fileToItem(absolutePath, directoryName);
+      let item: FileItem;
+      try {
+        item = await fileToItem(absolutePath, directoryName);
+      } catch {
+        continue;
+      }
 
       if (item.isDirectory) {
         await this.scanDirectory(absolutePath, directoryName, collector, filters);
@@ -355,7 +492,6 @@ export class FileService {
 
   async categorizeTopLevelFiles(directory: AuthorizedDirectory) {
     const files = await this.getTopLevelFiles(directory, 120);
-
     return files.map((file) => {
       const category = PDF_EXTENSIONS.has(file.extension)
         ? "PDFs"
@@ -364,7 +500,6 @@ export class FileService {
           : [".doc", ".docx", ".txt", ".rtf"].includes(file.extension)
             ? "Documentos"
             : "Outros";
-
       return {
         file,
         destinationDirectory: path.join(directory.path, category),

@@ -3,8 +3,10 @@ import type {
   AppPreferences,
   AuthorizedDirectory,
   CommandPreview,
+  ConnectorConfig,
   FileItem,
   PendingFileOperation,
+  ProjectDetail,
 } from "../../shared/types";
 import type {
   DocumentService,
@@ -13,6 +15,9 @@ import type {
 } from "./documentService";
 import type { FileService } from "./fileService";
 import type { TaskExecutionService } from "./taskExecutionService";
+import type { ProjectsService } from "./projectsService";
+import type { DeepResearchService } from "./deepResearchService";
+import { searchConnectorChunks, getConnectorFileContent } from "./connectorSyncService";
 
 type GeminiPart =
   | { text: string }
@@ -159,6 +164,42 @@ const TOOLS = {
           },
         },
         required: ["titulo", "instrucao"],
+      },
+    },
+    {
+      name: "criar_planilha",
+      description: "Cria uma planilha Excel (.xlsx) complexa e profissional. Permite inserir fórmulas automáticas do sistema Excel. Use sempre que o usuário pedir para gerar tabelas com cálculos, orçamentos, ou planilhas de controle automáticas.",
+      parameters: {
+        type: "object",
+        properties: {
+          titulo: {
+            type: "string",
+            description: "Nome do arquivo (ex: Planilha Emagrecimento.xlsx)",
+          },
+          abas: {
+            type: "array",
+            description: "Lista de abas da planilha",
+            items: {
+              type: "object",
+              properties: {
+                nome: {
+                  type: "string",
+                  description: "Nome da aba",
+                },
+                dados: {
+                  type: "string",
+                  description: "Obrigatório formato JSON string representando uma matriz bidimensional (Array de Arrays). Podes incluir números sem aspas para valores numéricos. Para criar um CÁLCULO/Fórmula, mande uma string começando com '=' (ex: '=B2-C2' ou '=SUM(A1:A10)'). Exemplo do que mandar nesta string: '[[\"Desc\", \"Valor\", \"Qtd\", \"Total\"], [\"ItemA\", 10, 2, \"=B2*C2\"]]'",
+                },
+              },
+              required: ["nome", "dados"],
+            },
+          },
+          directorio_destino: {
+            type: "string",
+            description: "Pasta de destino opcional.",
+          },
+        },
+        required: ["titulo", "abas"],
       },
     },
     {
@@ -331,6 +372,54 @@ const TOOLS = {
         required: ["query"],
       },
     },
+    {
+      name: "agente_pesquisa",
+      description:
+        "Agente especializado para pesquisas profundas e complexas que exigem múltiplos passos, combinando fontes da internet e arquivos locais do projeto. Retorna um relatório detalhado com citações.",
+      parameters: {
+        type: "object",
+        properties: {
+          objetivo: {
+            type: "string",
+            description: "O objetivo final da pesquisa detalhada",
+          },
+          topicos: {
+            type: "array",
+            items: { type: "string" },
+            description: "Tópicos específicos a serem explorados",
+          },
+        },
+        required: ["objetivo"],
+      },
+    },
+    {
+      name: "salvar_memoria_projeto",
+      description: "Salva uma informação importante, preferência do usuário ou decisão arquitetural como memória no projeto ativo.",
+      parameters: {
+        type: "object",
+        properties: {
+          chave: { type: "string", description: "Identificador curto em camelCase para a memória (ex: stackTech, tomDeVoz)" },
+          valor: { type: "string", description: "O conteúdo extenso ou direto da memória" },
+          categoria: { type: "string", description: "Categoria: 'fact', 'decision', 'preference' ou 'summary'" },
+        },
+        required: ["chave", "valor", "categoria"],
+      },
+    },
+    {
+      name: "buscar_nos_conectores",
+      description:
+        "Busca informações indexadas nos conectores externos do usuário (GitHub, Google Drive). Use quando o usuário perguntar sobre repositórios, código, documentos do Drive, ou quando a pergunta pode ser respondida por fontes externas conectadas.",
+      parameters: {
+        type: "object",
+        properties: {
+          consulta: {
+            type: "string",
+            description: "Texto a pesquisar nos conectores externos (ex: 'autenticação', 'README do projeto X', 'planilha de contratos')",
+          },
+        },
+        required: ["consulta"],
+      },
+    },
   ],
 };
 
@@ -349,16 +438,26 @@ const TOOL_LABELS: Record<string, string> = {
   mover_item: "Preparando movimentação",
   excluir_item: "Preparando exclusão",
   pesquisar_na_internet: "Pesquisando na internet",
+  agente_pesquisa: "Executando pesquisa profunda",
+  salvar_memoria_projeto: "Salvando memória do projeto",
+  buscar_nos_conectores: "Buscando nos conectores externos",
 };
 
 export class GeminiChatService {
   async chat(
     history: GeminiTurn[],
     newMessage: string,
-    context: { directories: AuthorizedDirectory[]; preferences: AppPreferences },
+    context: {
+      directories: AuthorizedDirectory[];
+      preferences: AppPreferences;
+      project?: ProjectDetail;
+      connectors?: ConnectorConfig[];
+    },
     fileService: FileService,
     documentService: DocumentService,
     taskExecutionService: TaskExecutionService,
+    projectsService?: ProjectsService,
+    deepResearchService?: DeepResearchService,
   ): Promise<ChatResult> {
     const apiKey = context.preferences.geminiApiKey?.trim();
 
@@ -374,7 +473,12 @@ export class GeminiChatService {
     }
 
     const model = context.preferences.geminiModel?.trim() || "gemini-2.5-flash";
-    const systemPrompt = this.buildSystemPrompt(context.directories);
+    const systemPrompt = this.buildSystemPrompt(
+      context.directories,
+      context.preferences.customSystemPrompt,
+      context.project,
+      context.connectors,
+    );
     const pendingPreviews: CommandPreview[] = [];
     const pendingFileOps: PendingFileOperation[] = [];
     const toolsUsed: string[] = [];
@@ -435,6 +539,8 @@ export class GeminiChatService {
           taskExecutionService,
           pendingPreviews,
           pendingFileOps,
+          projectsService,
+          deepResearchService,
         );
 
         functionResponses.push({
@@ -469,6 +575,8 @@ export class GeminiChatService {
     taskExecutionService: TaskExecutionService,
     pendingPreviews: CommandPreview[],
     pendingFileOps: PendingFileOperation[],
+    projectsService?: ProjectsService,
+    deepResearchService?: DeepResearchService,
   ): Promise<string> {
     const { directories, preferences } = context;
     const allowedPaths = directories.map((directory) => directory.path);
@@ -479,7 +587,15 @@ export class GeminiChatService {
       switch (name) {
         case "abrir_arquivo": {
           const resolved = await this.resolveFileReference(args, directories, fileService);
-          if (resolved.error) return resolved.error;
+          if (!resolved.file) return resolved.error ?? "Arquivo não encontrado.";
+
+          const matchConnector = resolved.file.path.match(/(?:@|\/|^)(drive|github|mcp)\/(.+)$/);
+          if (matchConnector) {
+            const cleanPath = matchConnector[1] + "/" + matchConnector[2];
+            const content = getConnectorFileContent(cleanPath);
+            if (!content) return "Não consegui encontrar o conteúdo sincronizado para este caminho no conector.";
+            return `O usuário pediu para abrir este arquivo de conector. Sendo um ambiente remoto, vou enviar o conteúdo a você (Assistente) para que o ajude.\nConteúdo do arquivo ${cleanPath}:\n\n${content.slice(0, 15000)}`;
+          }
 
           await fileService.openFile(resolved.file.path, allowedPaths);
           return `Arquivo aberto com sucesso: ${resolved.file.path}`;
@@ -487,11 +603,28 @@ export class GeminiChatService {
 
         case "analisar_documento": {
           const resolved = await this.resolveFileReference(args, directories, fileService);
-          if (resolved.error) return resolved.error;
+          if (!resolved.file) return resolved.error ?? "Arquivo não encontrado.";
 
           const objective = (args.objetivo as string | undefined)?.trim();
-          const document = await documentService.readDocument(resolved.file.path, allowedPaths);
-          const structuralSummary = this.describeDocument(document);
+          let structuralSummary = "";
+          let excerpt = "";
+          let title = resolved.file.name;
+
+          const matchConnector = resolved.file.path.match(/(?:@|\/|^)(drive|github|mcp)\/(.+)$/);
+          if (matchConnector) {
+            const cleanPath = matchConnector[1] + "/" + matchConnector[2];
+            const content = getConnectorFileContent(cleanPath);
+            if (!content) return "Não encontrei o conteúdo sincronizado do arquivo no conector.";
+            structuralSummary = `Tipo: Conector Remoto\nTítulo: ${cleanPath}`;
+            excerpt = content.length > 18000 ? `${content.slice(0, 18000)}\n\n[conteudo truncado]` : content;
+            title = cleanPath;
+          } else {
+            const document = await documentService.readDocument(resolved.file.path, allowedPaths);
+            structuralSummary = this.describeDocument(document);
+            excerpt = this.buildDocumentExcerpt(document);
+            title = `${document.name} — ${document.path}`;
+          }
+
           const analysis = await this.callGeminiText(
             apiKey,
             model,
@@ -504,13 +637,13 @@ export class GeminiChatService {
               structuralSummary,
               "",
               "Conteúdo extraído:",
-              this.buildDocumentExcerpt(document),
+              excerpt,
             ].join("\n"),
             1400,
           );
 
           return [
-            `Documento analisado: ${document.name} — ${document.path}`,
+            `Documento analisado: ${title}`,
             structuralSummary,
             "",
             "Análise:",
@@ -520,7 +653,7 @@ export class GeminiChatService {
 
         case "reorganizar_documento": {
           const resolved = await this.resolveFileReference(args, directories, fileService);
-          if (resolved.error) return resolved.error;
+          if (!resolved.file) return resolved.error ?? "Arquivo não encontrado.";
 
           const instruction = (args.instrucao as string | undefined)?.trim();
           if (!instruction) {
@@ -587,8 +720,8 @@ export class GeminiChatService {
               directories,
               fileService,
             );
-            if (resolved.error) {
-              return `Não foi possível usar "${ref}" como base do relatório: ${resolved.error}`;
+            if (!resolved.file) {
+              return `Não foi possível usar "${ref}" como base do relatório: ${resolved.error ?? "Arquivo não encontrado."}`;
             }
 
             baseDocuments.push(
@@ -645,6 +778,42 @@ export class GeminiChatService {
             `Relatório criado com sucesso em ${createdFiles.length} formato(s).`,
             ...createdFiles.map((file) => `- ${file.name} — ${file.path}`),
           ].join("\n");
+        }
+
+        case "criar_planilha": {
+          const titulo = args.titulo as string;
+          const abasRaw = args.abas as Array<{ nome: string; dados: string }>;
+          const dirHint = (args.directorio_destino as string | undefined)?.trim();
+
+          const outDir = this.resolveOutputDirectory(dirHint, directories);
+          const filename = titulo.toLowerCase().endsWith(".xlsx") ? titulo : `${titulo}.xlsx`;
+          const outputPath = path.join(outDir, filename);
+
+          // Build abas for documentService
+          const parsedAbas: Record<string, any[][]> = {};
+          for (const aba of abasRaw) {
+            try {
+              let cleanData = aba.dados.trim();
+              const firstBracket = cleanData.indexOf("[");
+              const lastBracket = cleanData.lastIndexOf("]");
+              if (firstBracket !== -1 && lastBracket !== -1) {
+                cleanData = cleanData.substring(firstBracket, lastBracket + 1);
+              }
+              let rows = JSON.parse(cleanData) as any[][];
+              if (!Array.isArray(rows)) rows = [["Erro", "Formato de dados não é um array."]];
+              parsedAbas[aba.nome] = rows;
+            } catch (err: any) {
+              parsedAbas[aba.nome] = [
+                ["Erro", "Falha de JSON Syntax"],
+                ["Stack do Assistente", aba.dados.substring(0, 500)],
+                ["Mensagem", err.message]
+              ];
+            }
+          }
+
+          const fileUrl = await documentService.writeExcel(outputPath, parsedAbas, allowedPaths);
+          await fileService.openFile(fileUrl, allowedPaths);
+          return `Planilha '${filename}' criada com sucesso em: ${fileUrl}\nO arquivo foi salvo e aberto no sistema!`;
         }
 
         case "listar_arquivos": {
@@ -833,6 +1002,60 @@ export class GeminiChatService {
           }
         }
 
+        case "agente_pesquisa": {
+          const objetivo = args.objetivo as string;
+
+          if (!deepResearchService) {
+            return "Serviço DeepResearch indisponível no momento.";
+          }
+
+          try {
+            const report = await deepResearchService.executeResearch(
+              apiKey,
+              model,
+              objetivo,
+              context.project ?? null
+            );
+
+            return `PESQUISA PROFUNDA CONCLUÍDA\n\n${report.markdownReport}`;
+          } catch (error) {
+            return `Falha grave no agente_pesquisa: ${error instanceof Error ? error.message : "Desconhecido"}`;
+          }
+        }
+
+        case "salvar_memoria_projeto": {
+          if (!context.project || !projectsService) return "Nenhum projeto ativo para salvar memória ou serviço indisponível.";
+          const chave = args.chave as string;
+          const valor = args.valor as string;
+          const categoria = (args.categoria as string) ?? "fact";
+          
+          await projectsService.saveMemory(context.project.project.id, {
+            key: chave,
+            value: valor,
+            category: categoria as 'fact' | 'decision' | 'preference' | 'summary',
+          });
+          
+          return `Memória '${chave}' (categoria: ${categoria}) salva no projeto ativo com sucesso.`;
+        }
+
+        case "buscar_nos_conectores": {
+          const query = (args.consulta as string | undefined)?.trim();
+          if (!query) return "Informe o termo de busca.";
+
+          const results = searchConnectorChunks(query, 8);
+
+          if (results.length === 0) {
+            return "Nenhum resultado encontrado nos conectores externos. Certifique-se de que os conectores foram sincronizados.";
+          }
+
+          const lines = results.map(
+            (r, i) =>
+              `[${i + 1}] ${r.connectorName} — ${r.remotePath}\n${r.content.slice(0, 600)}`
+          );
+
+          return `${results.length} resultado(s) nos conectores externos:\n\n${lines.join("\n\n---\n\n")}`;
+        }
+
         default:
           return `Ferramenta "${name}" não reconhecida.`;
       }
@@ -867,8 +1090,8 @@ export class GeminiChatService {
     if (caminho) {
       return {
         file: {
-          name: path.basename(caminho),
-          path: caminho,
+          name: path.basename(caminho.replace(/^@/, "")),
+          path: caminho.replace(/^@/, ""),
           extension: path.extname(caminho).toLowerCase(),
           size: 0,
           modifiedAt: "",
@@ -882,6 +1105,25 @@ export class GeminiChatService {
       return {
         error: "Informe o caminho completo ou o nome do arquivo desejado.",
       };
+    }
+
+    // Se for uma consulta mas na verdade for uma menção do DB
+    if (consulta && consulta.match(/(?:@|\/|^)(drive|github|mcp)\//)) {
+      const match = consulta.match(/(?:@|\/|^)(drive|github|mcp)\/(.+)$/);
+      if (match) {
+        const rawPath = match[1] + "/" + match[2];
+        return {
+          file: {
+            name: path.basename(rawPath),
+            path: rawPath,
+            extension: path.extname(rawPath).toLowerCase(),
+            size: 0,
+            modifiedAt: "",
+            isDirectory: false,
+            directoryName: path.basename(path.dirname(rawPath)),
+          },
+        };
+      }
     }
 
     const scoped = this.resolveScopedDirectories(directories, dirHint);
@@ -1012,7 +1254,12 @@ export class GeminiChatService {
       : { consulta: value };
   }
 
-  private buildSystemPrompt(directories: AuthorizedDirectory[]): string {
+  private buildSystemPrompt(
+    directories: AuthorizedDirectory[],
+    customPrompt?: string,
+    project?: ProjectDetail,
+    connectors?: ConnectorConfig[],
+  ): string {
     const dirList =
       directories.length > 0
         ? directories.map((directory) => `  - ${directory.name}: ${directory.path}`).join("\n")
@@ -1025,17 +1272,50 @@ export class GeminiChatService {
       day: "numeric",
     });
 
-    return [
+    const projectInfo = project
+      ? [
+          "",
+          `PROJETO ATIVO: ${project.project.name}`,
+          `Raiz do Projeto: ${project.project.rootPath}`,
+          "",
+          "INSTRUÇÕES DO PROJETO:",
+          ...project.instructions.map((ins) => `- [${ins.scope}${ins.path ? `: ${ins.path}` : ""}] ${ins.content}`),
+          "",
+          "CONTEXTO FIXADO (Pinned Context):",
+          ...project.contextItems.map((item) => `- [${item.type}] ${item.value}`),
+          "",
+          "MEMÓRIAS DO PROJETO (Facts/Decisions):",
+          ...project.memories.map((m) => `- ${m.key}: ${m.value} (${m.category})`),
+        ].join("\n")
+      : "";
+
+    const syncedConnectors = (connectors ?? []).filter((c) => c.status === "connected");
+    const connectorInfo =
+      syncedConnectors.length > 0
+        ? [
+            "",
+            "CONECTORES EXTERNOS INDEXADOS (use buscar_nos_conectores para pesquisar):",
+            ...syncedConnectors.map(
+              (c) =>
+                `  - ${c.name} (${c.type}) — última sincronização: ${c.lastSyncedAt ? new Date(c.lastSyncedAt).toLocaleString("pt-BR") : "nunca"}`
+            ),
+          ].join("\n")
+        : "";
+
+    const base = [
       "Você é o assistente operacional do Cowork, um gerenciador de arquivos local inteligente.",
       `Data atual: ${today}`,
       "",
       "Pastas autorizadas:",
       dirList,
+      projectInfo,
+      connectorInfo,
       "",
       "Diretrizes:",
       "- Responda sempre em português brasileiro, de forma concisa e direta",
       "- Use a ferramenta pesquisar_na_internet se o usuário fizer perguntas sobre o mundo exterior ou pedir um relatório cujos dados requerem internet (ex: 'Notícias de hoje', 'Cotação do dólar')",
-      "- **Menção de Arquivos Locals (@):** Quando o usuário menciona arquivos (identificado no topo da mensagem como '[Arquivos mencionados: ...]') e pede um relatório, análise ou reorganização, você DEVE extrair esses caminhos de arquivo e passá-los para as ferramentas correspondentes (ex: usar 'arquivos_base' em 'criar_relatorio' ou 'caminho_arquivo' em 'analisar_documento')",
+      "- **Menção de Arquivos Locals (@):** Quando o usuário menciona arquivos (identificado no topo da mensagem como '[Arquivos mencionados: ...]'), você DEVE extrair esses caminhos de arquivo e passá-los para as ferramentas correspondentes",
+      "- **Conectores (Drive/GitHub):** Você PODE usar as ferramentas 'abrir_arquivo' e 'analisar_documento' em arquivos de conectores (ex: drive/meu_arquivo.txt). O sistema irá interceptar e ler da nuvem local automaticamente. Nunca diga que não pode abrir um arquivo de conector.",
       "- Se houver arquivos marcados, priorize-os; se o tema for externo e não houver arquivos, use 'pesquisar_na_internet'",
       "- Use suas ferramentas de sistema de arquivos para interagir com o desktop",
       "- Quando o usuário pedir para abrir um arquivo, use a ferramenta abrir_arquivo",
@@ -1043,11 +1323,16 @@ export class GeminiChatService {
       "- Quando o usuário quiser reorganizar conteúdo de .md, .docx, .pdf ou planilhas, use reorganizar_documento",
       "- Quando o usuário pedir um relatório novo, use criar_relatorio",
       "- Ao reorganizar um documento existente, preserve o original e crie uma nova versão",
-      "- Para ações destrutivas (excluir, mover, renomear arquivos/pastas), use as ferramentas de item adequadas e não as execute em bash",
-      "- Quando listar arquivos, apresente-os de forma organizada e legível",
+      "- Para ações destrutivas, use as ferramentas de item adequadas e não as execute em bash",
+      "- Se identificar informações importantes, use OBRIGATORIAMENTE salvar_memoria_projeto para preservar a longo prazo",
       "- Se não entender a solicitação, peça clarificação",
-      "- Seja proativo: sugira ações relevantes com base no que encontrar",
     ].join("\n");
+
+    if (customPrompt?.trim()) {
+      return `${base}\n\nInstruções personalizadas do usuário:\n${customPrompt.trim()}`;
+    }
+
+    return base;
   }
 
   private async callGeminiText(

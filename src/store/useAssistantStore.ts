@@ -1,4 +1,4 @@
-import type { CommandPreview, ConversationMessage, ExecutionResult } from "@shared/types";
+import type { CommandPreview, ConversationMessage, ExecutionResult, PersistedConversation } from "@shared/types";
 import { create } from "zustand";
 
 type AssistantStore = {
@@ -11,6 +11,7 @@ type AssistantStore = {
   attachPreviewToLastAssistant: (preview: CommandPreview) => void;
   setResult: (result: ExecutionResult | null) => void;
   resetConversation: () => void;
+  loadConversation: (conv: PersistedConversation) => void;
 };
 
 const WELCOME: ConversationMessage = {
@@ -62,6 +63,13 @@ export const useAssistantStore = create<AssistantStore>((set) => ({
     set({
       conversationId: crypto.randomUUID(),
       messages: [{ ...WELCOME, id: crypto.randomUUID(), timestamp: new Date().toISOString() }],
+      lastResult: null,
+    }),
+
+  loadConversation: (conv) =>
+    set({
+      conversationId: conv.id,
+      messages: conv.messages.length > 0 ? conv.messages : [{ ...WELCOME, id: crypto.randomUUID(), timestamp: new Date().toISOString() }],
       lastResult: null,
     }),
 }));

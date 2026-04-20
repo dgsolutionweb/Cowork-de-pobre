@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState } from "react";
-import type { Automation, CreateAutomationInput, FileItem } from "@shared/types";
+import type { Automation, AutomationTemplate, CreateAutomationInput, FileItem } from "@shared/types";
 import {
   AtSign,
   CalendarClock,
@@ -9,6 +9,7 @@ import {
   File,
   FileImage,
   FileText,
+  Layers,
   Loader2,
   Plus,
   Play,
@@ -192,7 +193,7 @@ const ScheduleEditor = ({
             onClick={() => onChange({ ...value, type: t })}
             className={`rounded-lg py-1.5 text-[11px] font-medium transition-all ${
               value.type === t
-                ? "bg-white shadow-sm text-foreground ring-1 ring-border/50"
+                ? "bg-card shadow-sm text-foreground ring-1 ring-border/50"
                 : "text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -319,13 +320,19 @@ const AutomationDialog = ({
   open,
   onOpenChange,
   editing,
+  prefill,
   onSaved,
+  activeProjectId,
+  activeProjectName,
   availableFiles,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   editing: Automation | null;
+  prefill?: Automation;
   onSaved: () => void;
+  activeProjectId?: string;
+  activeProjectName?: string;
   availableFiles: FileItem[];
 }) => {
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
@@ -342,20 +349,21 @@ const AutomationDialog = ({
 
   useEffect(() => {
     if (open) {
-      if (editing) {
+      const source = editing ?? prefill;
+      if (source) {
         setForm({
-          name: editing.name,
-          description: editing.description,
-          commandText: editing.commandText,
-          enabled: editing.enabled,
-          schedule: parseScheduleString(editing.schedule),
+          name: source.name,
+          description: source.description,
+          commandText: source.commandText,
+          enabled: source.enabled,
+          schedule: parseScheduleString(source.schedule),
         });
       } else {
         setForm(DEFAULT_FORM);
       }
       setAtMentionOpen(false);
     }
-  }, [open, editing]);
+  }, [open, editing, prefill]);
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -437,7 +445,7 @@ const AutomationDialog = ({
     if (!isValid) return;
     setSaving(true);
     try {
-      const input: CreateAutomationInput = {
+      const baseInput: CreateAutomationInput = {
         name: form.name.trim(),
         description: form.description.trim(),
         commandText: form.commandText.trim(),
@@ -446,10 +454,13 @@ const AutomationDialog = ({
       };
 
       if (editing) {
-        await desktop().automations.update(editing.id, input);
+        await desktop().automations.update(editing.id, baseInput);
         toast.success("Automação atualizada.");
       } else {
-        await desktop().automations.create(input);
+        await desktop().automations.create({
+          ...baseInput,
+          projectId: activeProjectId,
+        });
         toast.success("Automação criada.");
       }
       onSaved();
@@ -474,6 +485,16 @@ const AutomationDialog = ({
         </DialogHeader>
 
         <div className="mt-4 flex flex-col gap-4">
+          {!editing && (
+            <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
+              <p className="text-[12px] text-muted-foreground">
+                {activeProjectName
+                  ? `Esta automação será vinculada ao projeto ativo: ${activeProjectName}.`
+                  : "Nenhum projeto ativo selecionado. A automação será criada como global."}
+              </p>
+            </div>
+          )}
+
           {/* Name */}
           <div className="flex flex-col gap-1.5">
             <label className="text-[12px] font-semibold text-foreground">
@@ -716,6 +737,81 @@ const AutomationCard = ({
   );
 };
 
+// ─── Templates dialog ─────────────────────────────────────────────────────────
+
+const CATEGORY_COLORS: Record<string, string> = {
+  organização: "text-blue-500",
+  limpeza: "text-rose-500",
+  produtividade: "text-amber-500",
+  documentos: "text-violet-500",
+};
+
+const TemplatesDialog = ({
+  open,
+  onOpenChange,
+  onSelect,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onSelect: (tpl: AutomationTemplate) => void;
+}) => {
+  const [templates, setTemplates] = useState<AutomationTemplate[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    desktop()
+      .automations.listTemplates()
+      .then(setTemplates)
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [open]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="w-[min(640px,94vw)]">
+        <DialogHeader>
+          <DialogTitle>Templates de automação</DialogTitle>
+          <DialogDescription>Escolha um template para pré-preencher o formulário.</DialogDescription>
+        </DialogHeader>
+        <div className="mt-2 max-h-[60vh] overflow-y-auto">
+          {loading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="size-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <div className="grid gap-2.5">
+              {templates.map((tpl) => (
+                <button
+                  key={tpl.id}
+                  type="button"
+                  onClick={() => { onSelect(tpl); onOpenChange(false); }}
+                  className="flex items-start gap-3 rounded-xl border border-border/60 bg-muted/20 p-4 text-left transition-colors hover:bg-muted/40 hover:border-border"
+                >
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/50 bg-background">
+                    <Layers className={`size-4 ${CATEGORY_COLORS[tpl.category] ?? "text-muted-foreground"}`} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="text-[13px] font-semibold text-foreground">{tpl.title}</p>
+                      <span className={`text-[10px] font-medium ${CATEGORY_COLORS[tpl.category] ?? "text-muted-foreground"}`}>
+                        {tpl.category}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-[12px] text-muted-foreground">{tpl.description}</p>
+                    <p className="mt-1.5 text-[11px] text-muted-foreground/70 font-mono truncate">{tpl.commandText}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export const TasksPage = () => {
@@ -724,9 +820,26 @@ export const TasksPage = () => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Automation | null>(null);
   const [availableFiles, setAvailableFiles] = useState<FileItem[]>([]);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [activeProject, setActiveProject] = useState<{ id: string; name: string } | null>(null);
 
   const loadAutomations = async () => {
-    setAutomations(await desktop().automations.list());
+    const api = desktop();
+    const [items, prefs] = await Promise.all([api.automations.list(), api.settings.getPreferences()]);
+    setAutomations(items);
+
+    if (!prefs.activeProjectId) {
+      setActiveProject(null);
+      return;
+    }
+
+    const detail = await api.projects.get(prefs.activeProjectId);
+    if (!detail) {
+      setActiveProject(null);
+      return;
+    }
+
+    setActiveProject({ id: detail.project.id, name: detail.project.name });
   };
 
   const fetchFiles = () => {
@@ -775,6 +888,19 @@ export const TasksPage = () => {
     setDialogOpen(true);
   };
 
+  const applyTemplate = (tpl: AutomationTemplate) => {
+    setEditing({
+      id: "",
+      name: tpl.title,
+      description: tpl.description,
+      commandText: tpl.commandText,
+      schedule: tpl.defaultSchedule,
+      enabled: true,
+      createdAt: new Date().toISOString(),
+    });
+    setDialogOpen(true);
+  };
+
   const openEdit = (automation: Automation) => {
     setEditing(automation);
     setDialogOpen(true);
@@ -790,7 +916,7 @@ export const TasksPage = () => {
         inspector={
           <div className="flex h-full flex-col gap-4">
             <div>
-              <Badge variant="outline" className="bg-white text-[9px] px-1.5 py-0">
+              <Badge variant="outline" className="bg-card text-[9px] px-1.5 py-0">
                 Automações
               </Badge>
               <h3 className="mt-2.5 text-sm font-semibold tracking-tight text-foreground">
@@ -853,16 +979,27 @@ export const TasksPage = () => {
                 ? "Nenhuma automação criada ainda."
                 : `${automations.length} automação(ões) · ${activeCount} ativa(s)`}
             </p>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {activeProject
+                ? `Projeto ativo: ${activeProject.name}`
+                : "Sem projeto ativo: novas automações serão globais."}
+            </p>
           </div>
-          <Button onClick={openCreate} className="gap-2 h-9">
-            <Plus className="size-3.5" />
-            Nova automação
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setTemplatesOpen(true)} className="gap-2 h-9">
+              <Layers className="size-3.5" />
+              Templates
+            </Button>
+            <Button onClick={openCreate} className="gap-2 h-9">
+              <Plus className="size-3.5" />
+              Nova automação
+            </Button>
+          </div>
         </div>
 
         {automations.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border/60 py-20 text-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-border/60 bg-white shadow-sm">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-border/60 bg-card shadow-sm">
               <Repeat2 className="size-6 text-muted-foreground/50" />
             </div>
             <p className="mt-4 text-base font-medium text-foreground">
@@ -896,9 +1033,18 @@ export const TasksPage = () => {
       <AutomationDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-        editing={editing}
+        editing={editing?.id ? editing : null}
+        prefill={editing?.id === "" ? editing : undefined}
         onSaved={loadAutomations}
+        activeProjectId={activeProject?.id}
+        activeProjectName={activeProject?.name}
         availableFiles={availableFiles}
+      />
+
+      <TemplatesDialog
+        open={templatesOpen}
+        onOpenChange={setTemplatesOpen}
+        onSelect={applyTemplate}
       />
     </>
   );
