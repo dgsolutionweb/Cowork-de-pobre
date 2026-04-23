@@ -38,3 +38,16 @@ Thumbs.db
 .claude/settings.local.json
 .aiox/install-log.txt
 release/
+.aiox-core
+.agent
+.antigravity
+.claude
+.codex
+.cursor
+.gemini
+.github
+.openclaude
+dist-electron
+dist
+prompt-cowork-local-ai.md
+
