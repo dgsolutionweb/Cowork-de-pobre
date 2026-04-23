@@ -1,7 +1,7 @@
 {
   "name": "cowork-local-ai",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "description": "Assistente local de produtividade com Electron, React e SQLite.",
   "main": "dist-electron/main.cjs",
