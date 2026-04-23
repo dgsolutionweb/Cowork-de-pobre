@@ -15,8 +15,12 @@
     "build:electron": "esbuild electron/main.ts electron/preload.ts --bundle --platform=node --format=cjs --outdir=dist-electron --out-extension:.js=.cjs --external:electron --external:better-sqlite3 --external:pdf-parse",
     "start": "electron dist-electron/main.cjs",
     "postinstall": "electron-builder install-app-deps",
-    "dist": "npm run build && electron-builder --mac dmg",
-    "dist:unsigned": "CSC_IDENTITY_AUTO_DISCOVERY=false npm run build && electron-builder --mac dmg"
+    "dist": "npm run dist:mac",
+    "dist:mac": "CSC_IDENTITY_AUTO_DISCOVERY=false npm run build && electron-builder --mac dmg",
+    "dist:unsigned": "CSC_IDENTITY_AUTO_DISCOVERY=false npm run build && electron-builder --mac dmg",
+    "dist:win": "npm run build && electron-builder --win nsis portable",
+    "dist:linux": "npm run build && electron-builder --linux AppImage deb",
+    "dist:all": "npm run build && electron-builder --mac --win --linux"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.3",

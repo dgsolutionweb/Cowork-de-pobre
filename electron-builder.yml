@@ -32,6 +32,27 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
   category: public.app-category.productivity
 
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
+    - target: deb
+      arch:
+        - x64
+        - arm64
+  category: Utility
+
 dmg:
   title: "Cowork ${version}"
   format: ULFO
